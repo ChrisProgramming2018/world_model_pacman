@@ -19,6 +19,36 @@ from data.loaders import RolloutSequenceDataset
 from models.vae import VAE
 from models.mdrnn import MDRNN, gmm_loss
 
+def to_latent(obs, next_obs):
+    """ Transform observations to latent space.
+
+    :args obs: 5D torch tensor (BSIZE, SEQ_LEN, ASIZE, SIZE, SIZE)
+    :args next_obs: 5D torch tensor (BSIZE, SEQ_LEN, ASIZE, SIZE, SIZE)
+
+    :returns: (latent_obs, latent_next_obs)
+        - latent_obs: 4D torch tensor (BSIZE, SEQ_LEN, LSIZE)
+        - next_latent_obs: 4D torch tensor (BSIZE, SEQ_LEN, LSIZE)
+    """
+    print(SIZE)
+    print("red size", RED_SIZE)
+    with torch.no_grad():
+        for x in (obs, next_obs):
+            # x = x.view(-1, 3)  # 96 96
+            
+            print("x shape ", x.shape)
+        obs, next_obs = [
+            f.upsample(x.view(-1, 3, 64, 64), size=RED_SIZE,
+                       mode='bilinear', align_corners=True)
+            for x in (obs, next_obs)]
+        
+        (obs_mu, obs_logsigma), (next_obs_mu, next_obs_logsigma) = [
+            vae(x)[1:] for x in (obs, next_obs)]
+
+        latent_obs, latent_next_obs = [
+            (x_mu + x_logsigma.exp() * torch.randn_like(x_mu)).view(BSIZE, SEQ_LEN, LSIZE)
+            for x_mu, x_logsigma in
+            [(obs_mu, obs_logsigma), (next_obs_mu, next_obs_logsigma)]]
+    return latent_obs, latent_next_obs
 parser = argparse.ArgumentParser("MDRNN training")
 parser.add_argument('--logdir', type=str,
                     help="Where things are logged and models are loaded from.")
@@ -42,71 +72,39 @@ state = torch.load(vae_file)
 print("Loading VAE at epoch {} "
       "with test error {}".format(
           state['epoch'], state['precision']))
-
+LSIZE = 200
+print(LSIZE)
 vae = VAE(3, LSIZE).to(device)
 vae.load_state_dict(state['state_dict'])
 
-# Loading model
-rnn_dir = join(args.logdir, 'mdrnn')
-rnn_file = join(rnn_dir, 'best.tar')
-
-if not exists(rnn_dir):
-    mkdir(rnn_dir)
-print(ASIZE)
-print(RSIZE)
-mdrnn = MDRNN(LSIZE, ASIZE, RSIZE, 5)
-mdrnn.to(device)
-optimizer = torch.optim.RMSprop(mdrnn.parameters(), lr=1e-3, alpha=.9)
-scheduler = ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=5)
-earlystopping = EarlyStopping('min', patience=30)
-
-
-if exists(rnn_file) and not args.noreload:
-    rnn_state = torch.load(rnn_file)
-    print("Loading MDRNN at epoch {} "
-          "with test error {}".format(
-              rnn_state["epoch"], rnn_state["precision"]))
-    mdrnn.load_state_dict(rnn_state["state_dict"])
-    optimizer.load_state_dict(rnn_state["optimizer"])
-    scheduler.load_state_dict(state['scheduler'])
-    earlystopping.load_state_dict(state['earlystopping'])
 
 
 # Data Loading
 transform = transforms.Lambda(
     lambda x: np.transpose(x, (0, 3, 1, 2)) / 255)
+
 train_loader = DataLoader(
     RolloutSequenceDataset('datasets/pacman', SEQ_LEN, transform, buffer_size=30),
     batch_size=BSIZE, num_workers=8, shuffle=True)
+loader = train_loader
+loader.dataset.load_next_buffer()
+print("length ", len(loader.dataset))
+
+
 test_loader = DataLoader(
     RolloutSequenceDataset('datasets/pacman', SEQ_LEN, transform, train=False, buffer_size=10),
     batch_size=BSIZE, num_workers=8)
 
-def to_latent(obs, next_obs):
-    """ Transform observations to latent space.
+for i, data in enumerate(loader):
+    obs, action, reward, terminal, next_obs = [arr.to(device) for arr in data]
+    print(type(obs))
+    print(obs.shape)
+    latent_obs, latent_next_obs = to_latent(obs, next_obs)
+    print(latent_obs.shape)
 
-    :args obs: 5D torch tensor (BSIZE, SEQ_LEN, ASIZE, SIZE, SIZE)
-    :args next_obs: 5D torch tensor (BSIZE, SEQ_LEN, ASIZE, SIZE, SIZE)
 
-    :returns: (latent_obs, latent_next_obs)
-        - latent_obs: 4D torch tensor (BSIZE, SEQ_LEN, LSIZE)
-        - next_latent_obs: 4D torch tensor (BSIZE, SEQ_LEN, LSIZE)
-    """
-    with torch.no_grad():
-        obs, next_obs = [
-            f.upsample(x.view(-1, 3, SIZE, SIZE), size=RED_SIZE,
-                       mode='bilinear', align_corners=True)
-            for x in (obs, next_obs)]
 
-        (obs_mu, obs_logsigma), (next_obs_mu, next_obs_logsigma) = [
-            vae(x)[1:] for x in (obs, next_obs)]
-
-        latent_obs, latent_next_obs = [
-            (x_mu + x_logsigma.exp() * torch.randn_like(x_mu)).view(BSIZE, SEQ_LEN, LSIZE)
-            for x_mu, x_logsigma in
-            [(obs_mu, obs_logsigma), (next_obs_mu, next_obs_logsigma)]]
-    return latent_obs, latent_next_obs
-
+sys.exit()
 def get_loss(latent_obs, action, reward, terminal,
              latent_next_obs, include_reward: bool):
     """ Compute losses.
@@ -132,10 +130,6 @@ def get_loss(latent_obs, action, reward, terminal,
                            for arr in [latent_obs, action,
                                        reward, terminal,
                                        latent_next_obs]]
-    
-    action = action.unsqueeze(2)                       
-    print(action.shape)
-    print(latent_obs.shape)
     mus, sigmas, logpi, rs, ds = mdrnn(action, latent_obs)
     gmm = gmm_loss(latent_next_obs, mus, sigmas, logpi)
     bce = f.binary_cross_entropy_with_logits(ds, terminal)

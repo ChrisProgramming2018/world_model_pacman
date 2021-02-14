@@ -2,7 +2,7 @@
 import argparse
 from os.path import join, exists
 from os import mkdir
-
+import os
 import torch
 import torch.utils.data
 from torch import optim
@@ -33,14 +33,16 @@ parser.add_argument('--nosamples', action='store_true',
 
 args = parser.parse_args()
 cuda = torch.cuda.is_available()
-
+cuda = False
 
 torch.manual_seed(123)
 # Fix numeric divergence due to bug in Cudnn
 torch.backends.cudnn.benchmark = True
 
 device = torch.device("cuda" if cuda else "cpu")
-
+#RED_SIZE = 258
+#RED_SIZE1 = 454
+print("red size ", RED_SIZE)
 
 transform_train = transforms.Compose([
     transforms.ToPILImage(),
@@ -57,6 +59,7 @@ transform_test = transforms.Compose([
 
 dataset_train = RolloutObservationDataset('datasets/pacman',
                                           transform_train, train=True)
+
 dataset_test = RolloutObservationDataset('datasets/pacman',
                                          transform_test, train=False)
 train_loader = torch.utils.data.DataLoader(
@@ -124,8 +127,8 @@ def test():
 # check vae dir exists, if not, create it
 vae_dir = join(args.logdir, 'vae')
 if not exists(vae_dir):
-    mkdir(vae_dir)
-    mkdir(join(vae_dir, 'samples'))
+    os.makedirs(vae_dir,exist_ok=True)
+    os.makedirs(join(vae_dir, 'samples'), exist_ok=True)
 
 reload_file = join(vae_dir, 'best.tar')
 if not args.noreload and exists(reload_file):
