@@ -8,14 +8,15 @@ import gym
 import numpy as np
 from utils.misc import sample_continuous_policy
 import gym_pacman
-
+import cv2
+import scipy.misc
 
 def generate_data(rollouts, data_dir, noise_type): # pylint: disable=R0914
     """ Generates data """
     assert exists(data_dir), "The data directory does not exist..."
 
     env = gym.make("BerkeleyPacmanPO-v0")
-    seq_len = 10
+    seq_len = 100
 
     for i in range(rollouts):
         env.reset("mediumClassic")
@@ -32,10 +33,14 @@ def generate_data(rollouts, data_dir, noise_type): # pylint: disable=R0914
             t += 1
 
             s, r, done, _ = env.step(action)
+            
+            s = scipy.misc.imresize(s, (64, 64, 3))
             s_rollout += [s]
             r_rollout += [r]
             d_rollout += [done]
-            if done or t == seq_len:
+            if done:
+                env.reset("mediumClassic")
+            if t == seq_len:
                 print("> End of rollout {}, {} frames...".format(i, len(s_rollout)))
                 np.savez(join(data_dir, 'rollout_{}'.format(i)),
                          observations=np.array(s_rollout),

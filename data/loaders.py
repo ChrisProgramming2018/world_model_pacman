@@ -15,7 +15,8 @@ class _RolloutDataset(torch.utils.data.Dataset): # pylint: disable=too-few-publi
             join(root, sd, ssd)
             for sd in listdir(root) if isdir(join(root, sd))
             for ssd in listdir(join(root, sd))]
-
+        print(self._files)
+        print("len files ", len(self._files))
         if train:
             self._files = self._files[:-600]
         else:
@@ -43,7 +44,7 @@ class _RolloutDataset(torch.utils.data.Dataset): # pylint: disable=too-few-publi
         for f in self._buffer_fnames:
             with np.load(f) as data:
                 self._buffer += [{k: np.copy(v) for k, v in data.items()}]
-                self._cum_size += [self._cum_size[-1] + 10]
+                self._cum_size += [self._cum_size[-1] + 100]
                 #self._cum_size += [self._cum_size[-1] +
                 #                   self._data_per_sequence(data['rewards'].shape[0])]
             pbar.update(1)
@@ -60,12 +61,12 @@ class _RolloutDataset(torch.utils.data.Dataset): # pylint: disable=too-few-publi
     def __getitem__(self, i):
         # binary search through cum_size
         file_index = bisect(self._cum_size, i) - 1
-        print("file index ", file_index)
-        print("cum_size ", self._cum_size)
-        print("i ", i)
+        # print("file index ", file_index)
+        # print("cum_size ", self._cum_size)
+        # print("i ", i)
         seq_index = i - self._cum_size[file_index]
-        print("buf seq", seq_index)
-        print("buf", len(self._buffer))
+        # print("buf seq", seq_index)
+        # print("buf", len(self._buffer))
         data = self._buffer[file_index]
         return self._get_data(data, seq_index)
 
